@@ -1,0 +1,4 @@
+*.csv
+*.RData
+*_cache
+*.html

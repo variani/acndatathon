@@ -1,0 +1,371 @@
+---
+title: "View the data"
+author: "Andrey Ziyatdinov"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: united
+    toc: true
+    keep_md: true
+---
+
+```{r options, echo = F}
+opts_chunk$set(fig.path = "figures/", comment = NA, results = 'markup', tidy = F, message = F, warning = F, echo = T, cache = T)
+```
+
+
+```{r inc, cache = FALSE}
+library(plyr)
+library(ggplot2)
+library(gridExtra)
+
+library(pander)
+
+library(data.table)
+```
+
+```{r settings, cache = FALSE}
+theme_set(theme_linedraw())
+panderOptions('table.split.table', Inf)
+panderOptions('knitr.auto.asis', FALSE)
+```
+
+# Data
+
+```{r dat}
+accidents <- fread("~/git/variani/acndatathon/data/accidents.csv", data.table = F)
+weather <- fread("~/git/variani/acndatathon/data/BCNweather-201001-201601.csv", data.table = F)
+grid <- fread("~/git/variani/acndatathon/data/city-grid.csv", data.table = F)
+holidays <- fread("~/git/variani/acndatathon/data/holidays.csv", data.table = F)
+people <- fread("~/git/variani/acndatathon/data/people-involved.csv", data.table = F)
+test <- fread("~/git/variani/acndatathon/data/test.csv", data.table = F)
+cause <- fread("~/git/variani/acndatathon/data/type-cause.csv", data.table = F)
+```
+
+## Cleaning
+
+### Dates
+
+```{r cleaning}
+test <- mutate(test,
+  Date = as.Date(date)) 
+```
+
+```{r accidents}
+accidents <- mutate(accidents,
+  year = substr(accidents$date, 1, 4))
+```
+
+```{r month_day}
+out <- ldply(strsplit(accidents$date, "-"), function(x) {
+ x2 <- x[2]
+ x3 <- x[3]
+
+ x2month <- suppressWarnings(is.na(as.numeric(x2)))
+ x3month <- suppressWarnings(is.na(as.numeric(x3)))
+ 
+ data.frame(x2 = x2, x3 = x3, x2month = x2month, x3month = x3month, stringsAsFactors = F) 
+})
+stopifnot(sum(diag(table(out$x2month, out$x3month))) == 0)
+```
+
+```{r month_day2}
+out <- mutate(out,
+  month = ifelse(x2month, x2, x3),
+  day = as.numeric(ifelse(x2month, x3, x2)))
+```
+
+```{r month_day3}
+out$month <- laply(out$month, function(x) which(month.name == x))
+```
+
+```{r ymd}
+accidents$year <- as.numeric(accidents$year)
+accidents$month <- as.numeric(out$month)
+accidents$day <- as.numeric(out$day)
+```
+
+Check the produced numeric vectors are OK.
+
+```{r date_ok}
+table(accidents$year)
+table(accidents$month)
+table(accidents$day)
+```
+
+Create Dates:
+
+```{r dates}
+accidents <- mutate(accidents,
+  Date = as.Date(paste(year, month, day, sep = "-")))
+```
+
+### Weekdays
+
+```{r add_weekday}
+add_weekday <- function(dat)
+{
+  dat <- mutate(dat,
+    weekday = weekdays(Date))
+  
+  dat$weekday <- factor(dat$weekday, ordered = TRUE, levels = c("Sunday", "Saturday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"))
+  dat$weekdayNum <- as.numeric(dat$weekday)
+  
+  return(dat)
+}
+```
+
+```{r weekday}
+accidents <- add_weekday(accidents) 
+test <- add_weekday(test) 
+```
+
+```{r tab1}
+table(accidents$weekday, accidents$weekdayNum)
+```
+
+
+## Plots
+
+### Shift
+
+```{r plot_shift}
+sf <- ddply(accidents, "Shift", summarize, num = length(ID)) 
+ggplot(sf, aes(Shift, num)) + geom_bar(stat = "identity") 
+```
+
+### Weekday
+
+```{r plot_weekday}
+sf <- ddply(accidents, "weekday", summarize, num = length(ID)) 
+ggplot(sf, aes(weekday, num)) + geom_bar(stat="identity") 
+```
+
+### Date 
+
+```{r plot_Date}
+sf <- ddply(accidents, "Date", summarize, num = length(ID))
+ggplot(sf, aes(Date, num)) + geom_bar(stat="identity")
+```
+
+```{r plot_Date2}
+ggplot(sf, aes(num)) + geom_histogram()
+```
+
+### GridID
+
+```{r plot_GridID}
+df <- subset(accidents, !is.na(GridID))
+sf <- ddply(df, "GridID", summarise, num = length(ID))
+```
+
+```{r plot_Gr}
+ggplot(sf, aes(num)) + geom_histogram()
+```
+
+### Weather
+
+Cut value could be 25.
+
+```{r plot_wind}
+qplot(train$meanWindSpeedKmh) + xlim(c(1, 50))
+```
+
+Cut value (lower tail) could be 40.
+
+```{r plot_hum}
+qplot(train$meanHumidity)
+```
+
+Cut value (lower tail) could be 0.
+
+```{r plot_dew}
+qplot(train$meanDewPoint)
+```
+
+```{r plot_temp}
+qplot(train$meanTemperatureC)
+```
+
+
+## Explore grid
+
+
+```{r grid}
+grid <- subset(grid, !is.na(GridID))
+
+df <- subset(accidents, !is.na(GridID))
+sf <- ddply(df, "GridID", summarise, num = length(ID))
+
+grid <- join(grid, sf, by = "GridID")
+grid <- within(grid,
+  num[is.na(num)] <- 0)
+
+stopifnot(!any(is.na(grid$num)))
+```
+
+```{r grid_clust}
+X <- grid[, -1]
+Y <- grid[1]
+
+d <- dist(X)
+```
+
+```{r grid_clus2}
+out <- hclust(d)
+```
+
+```{r plot_clust2}
+plot(out)
+```
+
+```{r predict_clust2}
+y <- cutree(out, 50)
+```
+
+```{r grid_id2}
+grid$GridID2 <- as.factor(y)
+```
+
+## Wheather
+
+```{r w}
+weather <- mutate(weather,
+  Date = as.Date(DateCET))
+
+weather <- add_weekday(weather)
+```
+
+```{r plot_weather}
+sf <- ddply(weather, "Date", summarise, num = length(Date))
+```
+
+
+```{r plot_weather2}
+ggplot(sf, aes(num)) + geom_histogram()
+```
+
+### Summary weather
+
+```{r sweather}
+sweather <- ddply(weather, "Date", summarize,
+  meanTemperatureC = mean(TemperatureC, na.rm = TRUE),
+  meanDewPoint = mean(DewPoint, na.rm = TRUE),
+  meanHumidity = mean(Humidity, na.rm = TRUE),
+  meanWindSpeedKmh = mean(as.numeric(WindSpeedKmh), na.rm = TRUE),
+  allConditions = paste(names(table(Conditions)), as.numeric(table(Conditions)), collapse = "|")
+)
+```
+
+```{r wd}
+wd <- unique(sweather$Date)
+```
+
+```{r wd_tab}
+table(accidents$Date %in% wd)
+table(test$Date %in% wd)
+```
+
+
+## Explore test
+
+```{r test_date}
+range(test$date) 
+```
+
+# Create train / test
+
+
+```{r traint}
+train <- join(accidents, sweather)
+test <- join(test, sweather)
+
+test <- mutate(test, 
+  month = month(Date),
+  year = year(Date))
+```
+
+```{r train_shift}
+train <- mutate(train, ShiftFac = factor(Shift, levels = c("Night", "Morning", "Afternoon"), ordered = TRUE))
+test <- mutate(test, ShiftFac = factor(Shift, levels = c("Night", "Morning", "Afternoon"), ordered = TRUE))
+```
+
+```{r grid2_train}
+train <- join(train, subset(grid, select = c("GridID", "Longitude.grid", "Latitude.grid", "GridID2")))
+test <- join(test, subset(grid, select = c("GridID", "Longitude.grid", "Latitude.grid", "GridID2")))
+```
+
+```{r dm_train}
+train <- mutate(train, dm = substr(Date, 6, 12))
+test <- mutate(test, dm = substr(Date, 6, 12))
+```
+
+```{r whether_bin}
+add_whether_bin <- function(dat)
+{
+  dat <- mutate(dat,
+    meanWindSpeedKmhBin = factor(as.numeric(meanWindSpeedKmh > 25)),
+    meanHumidityBin = factor(as.numeric(meanHumidity < 40)),
+    meanDewPointBin = factor(as.numeric(meanDewPoint < 0)))
+}    
+
+train <- add_whether_bin(train)
+test <- add_whether_bin(test)
+```
+
+```{r sf_train}
+sf <- ddply(train, c("dm", "Shift", "GridID2"), summarise,
+  acc = length(Date) / 5)
+```
+
+```{r sf_train2}
+dates <- data.frame(date = seq(as.Date("2010-01-01"), as.Date("2010-12-31"), "days"))
+
+df <- expand.grid(Date = dates$date,
+  Shift = unique(train$Shift),
+  GridID2 = na.omit(unique(grid$GridID2)),
+  stringsAsFactors = F)
+```
+
+```{r df_dm}
+df <- mutate(df, dm = substr(Date, 6, 12))
+```
+
+
+# Write csv
+
+```{r save_train, eval = F}
+vars <- c("Date", "Shift", "ShiftFac", "GridID", "GridID2",
+  "weekday", "weekdayNum", "dm", "month", "year",
+  "meanWindSpeedKmhBin", "meanHumidityBin", "meanDewPointBin")
+
+write.csv(subset(train, select = vars), file = "train.csv", row.names = F)
+write.csv(subset(test, select = vars), file = "test.csv", row.names = F)
+```
+
+```{r acc, eval = F}
+train2_accidents <- fread("train2_accidents.csv", data.table = F)
+train2_no_accidents <- fread("train2_no_accidents.csv", data.table = F)
+```
+
+```{r acc2, eval = F}
+dat <- fread("train2_no_accidents_p4.csv", data.table = F)
+
+dat$Date <- as.Date(dat$date)
+dat <- add_weekday(dat)
+dat <- join(dat, sweather)
+
+dat <- join(dat, subset(grid, select = c("GridID", "Longitude.grid", "Latitude.grid", "GridID2")))
+
+dat <- mutate(dat, 
+  month = month(Date),
+  year = year(Date))
+
+write.csv(dat, file = "test2.csv", row.names = F)
+
+train2_accidents <- dat
+```
+
+```{r acc22, eval = F}
+write.csv(train2_accidents, file = "train2_accidents2.csv", row.names = F)
+````
